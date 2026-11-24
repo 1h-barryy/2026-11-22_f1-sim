@@ -26,6 +26,8 @@ export function MicButton({
   disabled?: boolean;
 }) {
   const recording = state === 'recording';
+  // Locked while the mic is being prepared or the recording is being transcribed.
+  const locked = state === 'preparing' || state === 'transcribing';
   const pulse = useSharedValue(0);
   const active = useSharedValue(0);
 
@@ -51,12 +53,12 @@ export function MicButton({
       <Animated.View pointerEvents="none" style={[styles.ring, ringStyle]} />
       <PressableScale
         onPress={onPress}
-        disabled={disabled || state === 'transcribing'}
+        disabled={disabled || locked}
         accessibilityRole="button"
         accessibilityLabel={recording ? 'Stop recording' : 'Record voice'}
-        accessibilityState={{ busy: state === 'transcribing' }}
+        accessibilityState={{ disabled: disabled || locked, busy: locked }}
         style={[styles.button, recording ? styles.buttonRecording : styles.buttonIdle]}>
-        {state === 'transcribing' ? (
+        {locked ? (
           <ActivityIndicator color={colors.primary} />
         ) : (
           <Ionicons

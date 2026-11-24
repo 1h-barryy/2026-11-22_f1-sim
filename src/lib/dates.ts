@@ -30,26 +30,32 @@ export function todayISO(): string {
   return toISODate(new Date());
 }
 
-export function tomorrowISO(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
+/** Shift a YYYY-MM-DD date by whole days (local calendar). */
+export function addDaysISO(iso: string, days: number): string {
+  const d = parseISODate(iso) ?? new Date();
+  d.setDate(d.getDate() + days);
   return toISODate(d);
 }
 
-export function yesterdayISO(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return toISODate(d);
+export function tomorrowISO(today: string = todayISO()): string {
+  return addDaysISO(today, 1);
 }
 
-/** "Today" / "Tomorrow" / "Yesterday" / short date like "Mon, Nov 24". */
-export function formatRelativeDay(iso: string): string {
-  if (iso === todayISO()) return 'Today';
-  if (iso === tomorrowISO()) return 'Tomorrow';
-  if (iso === yesterdayISO()) return 'Yesterday';
+export function yesterdayISO(today: string = todayISO()): string {
+  return addDaysISO(today, -1);
+}
+
+/**
+ * "Today" / "Tomorrow" / "Yesterday" / short date like "Mon, Nov 24".
+ * Pass `today` (from useToday) so labels refresh at midnight.
+ */
+export function formatRelativeDay(iso: string, today: string = todayISO()): string {
+  if (iso === today) return 'Today';
+  if (iso === tomorrowISO(today)) return 'Tomorrow';
+  if (iso === yesterdayISO(today)) return 'Yesterday';
   const d = parseISODate(iso);
   if (!d) return iso;
-  const sameYear = d.getFullYear() === new Date().getFullYear();
+  const sameYear = iso.slice(0, 4) === today.slice(0, 4);
   return d.toLocaleDateString(undefined, {
     weekday: 'short',
     month: 'short',
@@ -59,9 +65,9 @@ export function formatRelativeDay(iso: string): string {
 }
 
 /** True if the date is strictly before today. ISO date strings compare lexically. */
-export function isOverdue(iso: string | null): boolean {
+export function isOverdue(iso: string | null, today: string = todayISO()): boolean {
   if (!iso) return false;
-  return iso < todayISO();
+  return iso < today;
 }
 
 /** IANA time zone of the device, e.g. "America/New_York". */

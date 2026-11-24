@@ -61,34 +61,49 @@ function errorFromResponse(status: number, body: unknown): ApiClientError {
 
 async function request(path: string, init: RequestInit): Promise<unknown> {
   const controller = new AbortController();
+  // One deadline for the whole exchange: headers AND body. The timer is only
+  // cleared after the body has been read, so a stalled body still times out.
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
-  let res: Response;
-  try {
-    res = await fetch(path, { ...init, signal: controller.signal });
-  } catch (err) {
-    devWarn(`fetch ${path} failed`, err);
-    // expo/fetch throws its own FetchError (not an AbortError) on abort, so check the signal.
+  // expo/fetch throws its own FetchError (not an AbortError) on abort, so check the signal.
+  const transportError = (context: string, err: unknown): ApiClientError => {
+    devWarn(context, err);
     const timedOut = controller.signal.aborted;
-    throw new ApiClientError(
+    return new ApiClientError(
       timedOut ? TIMEOUT_MESSAGE : NETWORK_MESSAGE,
       0,
       timedOut ? 'timeout' : 'network',
     );
+  };
+
+  try {
+    let res: Response;
+    try {
+      res = await fetch(path, { ...init, signal: controller.signal });
+    } catch (err) {
+      throw transportError(`fetch ${path} failed`, err);
+    }
+
+    let raw: string;
+    try {
+      raw = await res.text();
+    } catch (err) {
+      throw transportError(`reading the response body of ${path} failed`, err);
+    }
+
+    let body: unknown = null;
+    try {
+      body = raw ? JSON.parse(raw) : null;
+    } catch {
+      // Non-JSON body; handled below.
+    }
+
+    if (!res.ok) throw errorFromResponse(res.status, body);
+    if (body === null) throw new ApiClientError(GENERIC_MESSAGE, res.status, 'invalid');
+    return body;
   } finally {
     clearTimeout(timer);
   }
-
-  let body: unknown = null;
-  try {
-    body = await res.json();
-  } catch {
-    // Non-JSON body; handled below.
-  }
-
-  if (!res.ok) throw errorFromResponse(res.status, body);
-  if (body === null) throw new ApiClientError(GENERIC_MESSAGE, res.status, 'invalid');
-  return body;
 }
 
 /**

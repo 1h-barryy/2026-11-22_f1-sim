@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { StoreProvider } from '@/lib/store';
+import { TodayProvider } from '@/lib/today';
 import { colors } from '@/theme';
 
 const navTheme = {
@@ -21,12 +22,14 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <StoreProvider>
-        <ThemeProvider value={navTheme}>
-          <StatusBar style="dark" />
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="(tabs)" />
-          </Stack>
-        </ThemeProvider>
+        <TodayProvider>
+          <ThemeProvider value={navTheme}>
+            <StatusBar style="dark" />
+            <Stack screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="(tabs)" />
+            </Stack>
+          </ThemeProvider>
+        </TodayProvider>
       </StoreProvider>
     </SafeAreaProvider>
   );

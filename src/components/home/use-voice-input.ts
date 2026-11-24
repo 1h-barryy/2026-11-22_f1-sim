@@ -6,7 +6,7 @@ import {
   useAudioRecorderState,
   type RecordingOptions,
 } from 'expo-audio';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiClientError, transcribeAudio } from '@/lib/api';
 
@@ -31,7 +31,13 @@ function devWarn(context: string, err: unknown): void {
   if (__DEV__) console.warn(`[voice] ${context}:`, err);
 }
 
-export type VoiceState = 'idle' | 'recording' | 'transcribing';
+/**
+ * idle -> preparing (permission + recorder setup) -> recording -> transcribing -> idle.
+ * The mic is locked in every state except idle and recording.
+ */
+export type VoiceState = 'idle' | 'preparing' | 'recording' | 'transcribing';
+
+const RECORDING_STOP_FAILED_MESSAGE = "Couldn't finish the recording, so nothing was sent. Please try again.";
 
 interface Options {
   /** Called with the transcript. Never auto-sends; the caller puts it in the input. */
@@ -39,20 +45,43 @@ interface Options {
   onError: (message: string) => void;
 }
 
+/** Leave recording mode so later audio isn't routed to the earpiece. */
+function restoreAudioMode(): void {
+  setAudioModeAsync({ allowsRecording: false }).catch((err) => devWarn('restoring audio mode failed', err));
+}
+
 export function useVoiceInput({ onTranscript, onError }: Options) {
   const recorder = useAudioRecorder(SPEECH_PRESET);
   const recorderState = useAudioRecorderState(recorder, 250);
-  const [state, setState] = useState<VoiceState>('idle');
+  const [state, setStateValue] = useState<VoiceState>('idle');
+  // Mirrors `state` synchronously, so taps arriving before the next render
+  // (or the auto-stop effect) can't start or stop twice.
+  const stateRef = useRef<VoiceState>('idle');
+
+  const setState = useCallback((next: VoiceState) => {
+    stateRef.current = next;
+    setStateValue(next);
+  }, []);
 
   const stop = useCallback(async () => {
+    if (stateRef.current !== 'recording') return;
     setState('transcribing');
+
+    let stopped = true;
     try {
       await recorder.stop();
     } catch (err) {
+      stopped = false;
       devWarn('stop failed', err);
     }
-    // Leave recording mode so later audio isn't routed to the earpiece.
-    setAudioModeAsync({ allowsRecording: false }).catch(() => {});
+    restoreAudioMode();
+
+    // A failed stop can leave an unfinished file; never upload it.
+    if (!stopped) {
+      setState('idle');
+      onError(RECORDING_STOP_FAILED_MESSAGE);
+      return;
+    }
 
     const uri = recorder.uri;
     if (!uri) {
@@ -73,31 +102,46 @@ export function useVoiceInput({ onTranscript, onError }: Options) {
     } finally {
       setState('idle');
     }
-  }, [recorder, onTranscript, onError]);
+  }, [recorder, onTranscript, onError, setState]);
 
   const start = useCallback(async () => {
+    if (stateRef.current !== 'idle') return;
+    // Lock immediately: permission prompts and preparation take a while.
+    setState('preparing');
+
+    let audioModeSet = false;
+    let prepared = false;
     try {
       const permission = await requestRecordingPermissionsAsync();
       if (!permission.granted) {
         devWarn('microphone permission not granted', permission);
+        setState('idle');
         onError(MIC_DENIED_MESSAGE);
         return;
       }
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      audioModeSet = true;
       await recorder.prepareToRecordAsync();
+      prepared = true;
       recorder.record();
       setState('recording');
     } catch (err) {
       devWarn('start failed', err);
+      if (prepared) {
+        // Release the prepared recorder so the next attempt starts clean.
+        await recorder.stop().catch((stopErr: unknown) => devWarn('cleanup stop failed', stopErr));
+      }
+      if (audioModeSet) restoreAudioMode();
       setState('idle');
       onError(RECORDING_START_FAILED_MESSAGE);
     }
-  }, [recorder, onError]);
+  }, [recorder, onError, setState]);
 
   const toggle = useCallback(() => {
-    if (state === 'recording') void stop();
-    else if (state === 'idle') void start();
-  }, [state, start, stop]);
+    if (stateRef.current === 'recording') void stop();
+    else if (stateRef.current === 'idle') void start();
+    // preparing / transcribing: locked, ignore the tap.
+  }, [start, stop]);
 
   // Auto-stop at the time limit.
   useEffect(() => {

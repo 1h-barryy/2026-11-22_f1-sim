@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Notice } from '@/components/ui/notice';
 import { CATEGORIES } from '@/lib/types';
 import {
   borderWidth,
@@ -38,6 +39,9 @@ import {
 } from './draft';
 import { PressableScale } from './pressable-scale';
 
+/** What the parent reports back after trying to save or delete. */
+export type SheetOutcome = { ok: true } | { ok: false; message: string };
+
 type Props = {
   visible: boolean;
   /** Draft to start from each time the sheet opens. */
@@ -48,10 +52,17 @@ type Props = {
   lockedKind?: DraftKind;
   /** Custom heading shown at the top of the sheet. */
   title?: string;
-  /** Optional delete action shown in edit mode. */
-  onDelete?: () => void;
+  /**
+   * Optional delete action shown in edit mode. Resolve null if the user
+   * cancelled the confirmation, otherwise the outcome of the delete.
+   */
+  onDelete?: () => Promise<SheetOutcome | null>;
   onCancel: () => void;
-  onSave: (draft: Draft) => void;
+  /**
+   * Persist the draft. The sheet stays open (keeping the draft) and shows the
+   * message if this resolves { ok: false }; the parent closes it on success.
+   */
+  onSave: (draft: Draft) => Promise<SheetOutcome>;
 };
 
 const CATEGORY_EMOJI: Record<(typeof CATEGORIES)[number], string> = {
@@ -82,12 +93,17 @@ export function ConfirmSheet({
     lockedKind ? { ...initialDraft, kind: lockedKind } : initialDraft,
   );
   const [showErrors, setShowErrors] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // Synchronous guard: two taps before the next render must not save twice.
+  const savingRef = useRef(false);
 
   // Reset whenever the sheet is opened with a new draft.
   useEffect(() => {
     if (visible) {
       setDraft(lockedKind ? { ...initialDraft, kind: lockedKind } : initialDraft);
       setShowErrors(false);
+      setSaveError(null);
     }
   }, [visible, initialDraft, lockedKind]);
 
@@ -106,15 +122,36 @@ export function ConfirmSheet({
     setDraft((d) => switchKind(d, kind));
   };
 
+  const runAction = async (action: () => Promise<SheetOutcome | null>) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const outcome = await action();
+      if (outcome && !outcome.ok) {
+        setSaveError(outcome.message);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      } else if (outcome?.ok) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      }
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
   const handleSave = () => {
+    if (savingRef.current) return;
     if (hasErrors(errors)) {
       setShowErrors(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
       return;
     }
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    onSave(draft);
+    void runAction(() => onSave(draft));
   };
+
+  const handleDelete = onDelete ? () => void runAction(onDelete) : undefined;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
@@ -259,6 +296,10 @@ export function ConfirmSheet({
               </>
             )}
 
+            {saveError ? (
+              <Notice message={saveError} onDismiss={() => setSaveError(null)} />
+            ) : null}
+
             <View style={styles.actions}>
               <PressableScale
                 onPress={onCancel}
@@ -268,17 +309,20 @@ export function ConfirmSheet({
               </PressableScale>
               <PressableScale
                 onPress={handleSave}
+                disabled={saving}
                 accessibilityRole="button"
                 accessibilityLabel={isExpense ? 'Save expense' : 'Save task'}
+                accessibilityState={{ disabled: saving, busy: saving }}
                 style={[styles.button, styles.saveButton, { backgroundColor: accent }]}>
                 <Ionicons name="checkmark" size={iconSize.md} color={colors.onPrimary} />
                 <Text style={styles.saveText}>Save</Text>
               </PressableScale>
             </View>
 
-            {onDelete ? (
+            {handleDelete ? (
               <PressableScale
-                onPress={onDelete}
+                onPress={handleDelete}
+                disabled={saving}
                 accessibilityRole="button"
                 accessibilityLabel={isExpense ? 'Delete expense' : 'Delete task'}
                 style={styles.deleteButton}>

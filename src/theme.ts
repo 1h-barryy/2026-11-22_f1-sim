@@ -1,22 +1,26 @@
 // Little Life design tokens. Light mode only: playful but clean.
 
+// Text colors meet WCAG AA (at least 4.5:1) for ordinary text on the light
+// surfaces they're used on (surface, background, surfaceAlt and their own
+// *Soft tint), and white (onPrimary) text on primary / expense / task / danger
+// fills meets 4.5:1 too. Re-check contrast if you change any of these.
 export const colors = {
   background: '#FFF9F2', // warm cream
   surface: '#FFFFFF',
   surfaceAlt: '#F6EEE4', // subtle chips / inputs
   border: '#EADFD2',
   text: '#2B2233',
-  mutedText: '#857A8C',
-  primary: '#7C5CFF', // playful violet
-  primarySoft: '#ECE6FF',
+  mutedText: '#73697A', // 5.2:1 on white, 4.5:1 on surfaceAlt
+  primary: '#6541F0', // playful violet; white text 5.9:1
+  primarySoft: '#EFEAFF',
   onPrimary: '#FFFFFF',
-  expense: '#FF7A59', // coral for money
-  expenseSoft: '#FFE6DE',
-  task: '#2EB5A5', // teal for to-dos
-  taskSoft: '#D9F4F0',
-  success: '#34C26B',
-  warning: '#F5A623',
-  danger: '#E5484D',
+  expense: '#BF3F0B', // terracotta for money; white text 5.3:1
+  expenseSoft: '#FFECE5',
+  task: '#0F766E', // deep teal for to-dos; white text 5.5:1
+  taskSoft: '#DDF5F1',
+  success: '#34C26B', // decorative only (category dot), never text
+  warning: '#A0560A', // amber; overdue dates 5.5:1 on white
+  danger: '#C92A30', // error text 5.4:1 on white
 } as const;
 
 export const spacing = {
@@ -40,8 +44,8 @@ export const radius = {
 
 export const fontSize = {
   micro: 11, // tab bar labels
-  caption: 13,
-  small: 14,
+  caption: 13, // short labels only (counts, category tags); never sentences
+  small: 15, // smallest size for explanatory / body text
   body: 16,
   bodyLarge: 18,
   title: 22,

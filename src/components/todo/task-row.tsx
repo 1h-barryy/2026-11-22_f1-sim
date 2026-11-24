@@ -2,7 +2,6 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Alert,
   Platform,
   Pressable,
   StyleSheet,
@@ -24,15 +23,25 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 
-import { formatRelativeDay, isOverdue, todayISO } from '@/lib/dates';
+import { confirmDestructive } from '@/lib/confirm';
+import { formatRelativeDay, isOverdue } from '@/lib/dates';
 import type { Task } from '@/lib/types';
 import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
 interface TaskRowProps {
   task: Task;
   justMoved: boolean;
+  /** The screen is about to commit a check / uncheck for this task. */
+  pending: boolean;
+  /** Shared local date (YYYY-MM-DD) from useToday, for Today / overdue labels. */
+  today: string;
   onPress: (task: Task) => void;
-  onToggle: (id: string) => void;
+  /**
+   * Ask the screen to toggle this task after `commitDelayMs` (the length of the
+   * row's animation). The screen owns the commit, so it still happens if this
+   * row unmounts (e.g. scrolled out of the list) mid-animation.
+   */
+  onToggle: (id: string, commitDelayMs: number) => void;
   onDelete: (id: string) => void;
 }
 
@@ -104,13 +113,22 @@ function FallbackStrikeLine({ progress }: { progress: SharedValue<number> }) {
   );
 }
 
-export function TaskRow({ task, justMoved, onPress, onToggle, onDelete }: TaskRowProps) {
+export function TaskRow({
+  task,
+  justMoved,
+  pending,
+  today,
+  onPress,
+  onToggle,
+  onDelete,
+}: TaskRowProps) {
   const [lines, setLines] = useState<TextLineMetrics[]>([]);
+  // True while THIS row instance is animating a check / uncheck it started.
   const pendingRef = useRef(false);
   const prevDoneRef = useRef(task.done);
+  const prevPendingRef = useRef(pending);
   const didEnterRef = useRef(false);
   const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const checkProgress = useSharedValue(task.done ? 1 : 0);
   const checkboxScale = useSharedValue(1);
@@ -126,14 +144,11 @@ export function TaskRow({ task, justMoved, onPress, onToggle, onDelete }: TaskRo
       clearTimeout(exitTimerRef.current);
       exitTimerRef.current = null;
     }
-    if (commitTimerRef.current !== null) {
-      clearTimeout(commitTimerRef.current);
-      commitTimerRef.current = null;
-    }
   }, []);
 
   useEffect(() => {
-    if (justMoved && !didEnterRef.current) {
+    // Wait until the screen's commit has finished before playing the entry.
+    if (justMoved && !pending && !didEnterRef.current) {
       didEnterRef.current = true;
       rowOpacity.value = withTiming(1, {
         duration: ENTER_MS,
@@ -142,7 +157,7 @@ export function TaskRow({ task, justMoved, onPress, onToggle, onDelete }: TaskRo
       rowTranslateY.value = withSpring(0, { damping: 18, stiffness: 280, mass: 0.8 });
       rowScale.value = withSpring(1, { damping: 18, stiffness: 280, mass: 0.8 });
     }
-  }, [justMoved, rowOpacity, rowScale, rowTranslateY]);
+  }, [justMoved, pending, rowOpacity, rowScale, rowTranslateY]);
 
   useEffect(() => {
     if (prevDoneRef.current === task.done) return;
@@ -157,6 +172,36 @@ export function TaskRow({ task, justMoved, onPress, onToggle, onDelete }: TaskRo
     rowScale.value = 1;
   }, [
     task.done,
+    checkProgress,
+    strikeProgress,
+    checkboxScale,
+    ringProgress,
+    rowOpacity,
+    rowTranslateY,
+    rowScale,
+  ]);
+
+  // The commit finished without changing this task (the save failed): put the
+  // row back the way it was. A successful commit remounts the row in its new
+  // section instead, so this only runs on failure.
+  useEffect(() => {
+    const wasPending = prevPendingRef.current;
+    prevPendingRef.current = pending;
+    if (!wasPending || pending || !pendingRef.current) return;
+    if (prevDoneRef.current !== task.done) return;
+    clearTimers();
+    pendingRef.current = false;
+    checkProgress.value = withTiming(task.done ? 1 : 0, { duration: 150 });
+    strikeProgress.value = withTiming(task.done ? 1 : 0, { duration: 150 });
+    checkboxScale.value = withSpring(1);
+    ringProgress.value = 0;
+    rowOpacity.value = withTiming(1, { duration: ENTER_MS });
+    rowTranslateY.value = withSpring(0, { damping: 18, stiffness: 280, mass: 0.8 });
+    rowScale.value = withSpring(1, { damping: 18, stiffness: 280, mass: 0.8 });
+  }, [
+    pending,
+    task.done,
+    clearTimers,
     checkProgress,
     strikeProgress,
     checkboxScale,
@@ -191,7 +236,7 @@ export function TaskRow({ task, justMoved, onPress, onToggle, onDelete }: TaskRo
   }, []);
 
   const handleCheckboxPress = useCallback(() => {
-    if (pendingRef.current) return;
+    if (pendingRef.current || pending) return;
     pendingRef.current = true;
     clearTimers();
 
@@ -238,9 +283,7 @@ export function TaskRow({ task, justMoved, onPress, onToggle, onDelete }: TaskRo
         });
       }, CHECK_HOLD_MS);
 
-      commitTimerRef.current = setTimeout(() => {
-        onToggle(task.id);
-      }, CHECK_HOLD_MS + CHECK_EXIT_MS);
+      onToggle(task.id, CHECK_HOLD_MS + CHECK_EXIT_MS);
     } else {
       // Unchecking: springy uncheck + strikethrough retract + glide back to Upcoming
       checkboxScale.value = withSequence(
@@ -272,11 +315,10 @@ export function TaskRow({ task, justMoved, onPress, onToggle, onDelete }: TaskRo
         });
       }, UNCHECK_HOLD_MS);
 
-      commitTimerRef.current = setTimeout(() => {
-        onToggle(task.id);
-      }, UNCHECK_HOLD_MS + UNCHECK_EXIT_MS);
+      onToggle(task.id, UNCHECK_HOLD_MS + UNCHECK_EXIT_MS);
     }
   }, [
+    pending,
     task.done,
     task.id,
     clearTimers,
@@ -291,24 +333,22 @@ export function TaskRow({ task, justMoved, onPress, onToggle, onDelete }: TaskRo
   ]);
 
   const handleRowPress = useCallback(() => {
-    if (pendingRef.current) return;
+    if (pendingRef.current || pending) return;
     onPress(task);
-  }, [onPress, task]);
+  }, [onPress, task, pending]);
 
   const handleLongPress = useCallback(() => {
-    if (pendingRef.current) return;
+    if (pendingRef.current || pending) return;
     if (Platform.OS !== 'web') {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     }
-    Alert.alert('Delete task?', `Remove "${task.title}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => onDelete(task.id),
-      },
-    ]);
-  }, [task.id, task.title, onDelete]);
+    void confirmDestructive({
+      title: 'Delete task?',
+      message: `Remove "${task.title}"?`,
+    }).then((confirmed) => {
+      if (confirmed) onDelete(task.id);
+    });
+  }, [task.id, task.title, onDelete, pending]);
 
   const rowAnimatedStyle = useAnimatedStyle(() => ({
     opacity: rowOpacity.value,
@@ -355,9 +395,11 @@ export function TaskRow({ task, justMoved, onPress, onToggle, onDelete }: TaskRo
     ),
   }));
 
-  const overdue = !task.done && isOverdue(task.due);
-  const isToday = !task.done && task.due !== null && task.due === todayISO();
-  const dueLabel = task.due ? formatRelativeDay(task.due) : null;
+  const overdue = !task.done && isOverdue(task.due, today);
+  const isToday = !task.done && task.due !== null && task.due === today;
+  const dueLabel = task.due ? formatRelativeDay(task.due, today) : null;
+  // Screen readers get the deadline too, e.g. "Pay rent, due Yesterday, overdue".
+  const dueSpoken = dueLabel ? `, due ${dueLabel}${overdue ? ', overdue' : ''}` : '';
 
   return (
     <Animated.View style={[styles.wrapper, rowAnimatedStyle]}>
@@ -369,7 +411,9 @@ export function TaskRow({ task, justMoved, onPress, onToggle, onDelete }: TaskRo
           accessibilityRole="checkbox"
           accessibilityState={{ checked: task.done }}
           accessibilityLabel={
-            task.done ? `Mark ${task.title} as upcoming` : `Complete ${task.title}`
+            task.done
+              ? `Mark ${task.title} as upcoming${dueSpoken}`
+              : `Complete ${task.title}${dueSpoken}`
           }
           accessibilityHint="Long press to delete this task"
           style={styles.checkboxTouchTarget}>
@@ -392,7 +436,7 @@ export function TaskRow({ task, justMoved, onPress, onToggle, onDelete }: TaskRo
           onLongPress={handleLongPress}
           delayLongPress={380}
           accessibilityRole="button"
-          accessibilityLabel={`Edit ${task.title}`}
+          accessibilityLabel={`Edit ${task.title}${dueSpoken}`}
           accessibilityHint="Tap to edit, or long press to delete this task"
           style={({ pressed }) => [styles.body, pressed && styles.bodyPressed]}>
           <View style={styles.titleBox}>
@@ -421,7 +465,7 @@ export function TaskRow({ task, justMoved, onPress, onToggle, onDelete }: TaskRo
               {overdue ? (
                 <Ionicons
                   name="time-outline"
-                  size={fontSize.caption}
+                  size={fontSize.small}
                   color={colors.warning}
                 />
               ) : null}
@@ -522,7 +566,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   dueText: {
-    fontSize: fontSize.caption,
+    fontSize: fontSize.small,
     fontWeight: fontWeight.medium,
     color: colors.mutedText,
   },

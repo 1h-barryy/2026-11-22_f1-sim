@@ -60,11 +60,26 @@ function formatAmountInput(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(2);
 }
 
-/** "$1,234.50" -> 1234.5. Returns NaN if it isn't a plain number. */
+/**
+ * Normalize an amount typed by the user to "123.45" form, or null if it's not a
+ * plain amount. A comma is accepted only as the decimal separator: it must be
+ * the only separator and be followed by 1-2 digits ("12,50" -> "12.50").
+ * Anything else with a comma ("1,250", "1,234.50", "1,2,3") is rejected rather
+ * than guessed, so "12,50" can never become 1250.
+ */
+function normalizeAmount(input: string): string | null {
+  const cleaned = input.replace(/[$\s]/g, '');
+  if (cleaned.includes(',')) {
+    return /^\d+,\d{1,2}$/.test(cleaned) ? cleaned.replace(',', '.') : null;
+  }
+  if (!/^\d*\.?\d*$/.test(cleaned) || cleaned === '' || cleaned === '.') return null;
+  return cleaned;
+}
+
+/** "$12.50" or "12,50" -> 12.5. Returns NaN if it isn't a plain amount. */
 export function parseAmount(input: string): number {
-  const cleaned = input.replace(/[$,\s]/g, '');
-  if (!/^\d*\.?\d*$/.test(cleaned) || cleaned === '' || cleaned === '.') return NaN;
-  return Number(cleaned);
+  const normalized = normalizeAmount(input);
+  return normalized === null ? NaN : Number(normalized);
 }
 
 export function validateDraft(draft: Draft): DraftErrors {
@@ -73,7 +88,11 @@ export function validateDraft(draft: Draft): DraftErrors {
   if (draft.kind === 'expense') {
     const amount = parseAmount(draft.amount);
     if (!draft.amount.trim()) errors.amount = 'Enter an amount.';
-    else if (!Number.isFinite(amount)) errors.amount = 'Use numbers only, like 12.50.';
+    else if (!Number.isFinite(amount)) {
+      errors.amount = draft.amount.includes(',')
+        ? 'Use a comma only for cents, like 12,50 — or a dot, like 12.50. No thousands separators.'
+        : 'Use numbers only, like 12.50.';
+    }
     else if (amount <= 0) errors.amount = 'Amount must be more than 0.';
     else if (amount > MAX_AMOUNT) errors.amount = 'That amount is too large.';
     // Compare with a tolerance: 4.35 * 100 === 434.99999999999994 in floating point.

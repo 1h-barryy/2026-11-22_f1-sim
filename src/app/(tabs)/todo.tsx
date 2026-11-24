@@ -3,7 +3,6 @@ import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Platform,
   SectionList,
   StyleSheet,
@@ -13,14 +12,18 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ConfirmSheet } from '@/components/home/confirm-sheet';
+import { ConfirmSheet, type SheetOutcome } from '@/components/home/confirm-sheet';
 import { draftFromTask, emptyDraft, toNewTask, type Draft } from '@/components/home/draft';
 import { PressableScale } from '@/components/home/pressable-scale';
 import { buildTaskSections, type TaskSection } from '@/components/todo/sections';
 import { TaskRow } from '@/components/todo/task-row';
 import { TodoEmptyState } from '@/components/todo/todo-empty-state';
 import { TodoSummary } from '@/components/todo/todo-summary';
+import { Notice } from '@/components/ui/notice';
+import { StorageNotice } from '@/components/ui/storage-notice';
+import { confirmDestructive } from '@/lib/confirm';
 import { useStore } from '@/lib/store';
+import { useToday } from '@/lib/today';
 import type { Task } from '@/lib/types';
 import {
   colors,
@@ -42,58 +45,114 @@ type SheetState =
   | { mode: 'edit'; task: Task; draft: Draft };
 
 export default function TodoScreen() {
-  const { tasks, loaded, addTask, updateTask, toggleTask, deleteTask } = useStore();
+  const { tasks, status, addTask, updateTask, toggleTask, deleteTask } = useStore();
+  const today = useToday();
   const [recentlyMovedIds, setRecentlyMovedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  // Tasks whose check / uncheck animation is playing; the commit is scheduled here.
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [sheet, setSheet] = useState<SheetState | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   // Created lazily and always null-checked. Fast Refresh keeps a ref's value
-  // across edits, so this ref can hold whatever an earlier version stored (e.g.
-  // null). Never assume it holds a Map.
+  // across edits, so these refs can hold whatever an earlier version stored
+  // (e.g. null). Never assume they hold a Map.
   const moveTimersRef = useRef<TimerMap | null>(null);
+  const commitTimersRef = useRef<TimerMap | null>(null);
+  const mountedRef = useRef(false);
 
   const getMoveTimers = useCallback((): TimerMap => {
     if (!moveTimersRef.current) moveTimersRef.current = new Map();
     return moveTimersRef.current;
   }, []);
 
-  useEffect(() => {
-    return () => {
-      // Read at cleanup time on purpose: we want every timer started after mount.
-      const timers = moveTimersRef.current;
-      if (!timers) return;
-      for (const timer of timers.values()) {
-        clearTimeout(timer);
-      }
-      timers.clear();
-    };
+  const getCommitTimers = useCallback((): TimerMap => {
+    if (!commitTimersRef.current) commitTimersRef.current = new Map();
+    return commitTimersRef.current;
   }, []);
 
-  const handleToggle = useCallback(
-    (id: string) => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      // Read at cleanup time on purpose: we want every timer started after mount.
+      const moveTimers = moveTimersRef.current;
+      if (moveTimers) {
+        for (const timer of moveTimers.values()) clearTimeout(timer);
+        moveTimers.clear();
+      }
+      // A check-off the user already saw must not be lost: commit it now.
+      const commitTimers = commitTimersRef.current;
+      if (commitTimers) {
+        for (const [id, timer] of commitTimers) {
+          clearTimeout(timer);
+          void toggleTask(id);
+        }
+        commitTimers.clear();
+      }
+    };
+  }, [toggleTask]);
+
+  const setInSet = useCallback(
+    (setter: typeof setPendingIds, id: string, present: boolean) =>
+      setter((prev) => {
+        if (prev.has(id) === present) return prev;
+        const next = new Set(prev);
+        if (present) next.add(id);
+        else next.delete(id);
+        return next;
+      }),
+    [],
+  );
+
+  const commitToggle = useCallback(
+    async (id: string) => {
+      commitTimersRef.current?.delete(id);
+      // Mark first so the row that mounts in its new section plays its entry.
+      setInSet(setRecentlyMovedIds, id, true);
+      const result = await toggleTask(id);
+      if (!mountedRef.current) return;
+      setInSet(setPendingIds, id, false);
+      if (!result.ok) {
+        setInSet(setRecentlyMovedIds, id, false);
+        setActionError(result.message);
+        return;
+      }
       const timers = getMoveTimers();
       const existing = timers.get(id);
-      if (existing !== undefined) {
-        clearTimeout(existing);
-      }
-      setRecentlyMovedIds((prev) => {
-        const next = new Set(prev);
-        next.add(id);
-        return next;
-      });
-      toggleTask(id);
-      const timer = setTimeout(() => {
-        moveTimersRef.current?.delete(id);
-        setRecentlyMovedIds((prev) => {
-          if (!prev.has(id)) return prev;
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-      }, MOVE_HIGHLIGHT_MS);
-      timers.set(id, timer);
+      if (existing !== undefined) clearTimeout(existing);
+      timers.set(
+        id,
+        setTimeout(() => {
+          moveTimersRef.current?.delete(id);
+          setInSet(setRecentlyMovedIds, id, false);
+        }, MOVE_HIGHLIGHT_MS),
+      );
     },
-    [toggleTask, getMoveTimers],
+    [toggleTask, getMoveTimers, setInSet],
+  );
+
+  const handleToggle = useCallback(
+    (id: string, commitDelayMs: number) => {
+      const timers = getCommitTimers();
+      if (timers.has(id)) return;
+      setActionError(null);
+      setInSet(setPendingIds, id, true);
+      timers.set(
+        id,
+        setTimeout(() => void commitToggle(id), commitDelayMs),
+      );
+    },
+    [getCommitTimers, commitToggle, setInSet],
+  );
+
+  const handleDelete = useCallback(
+    async (id: string) => {
+      setActionError(null);
+      const result = await deleteTask(id);
+      if (!result.ok && mountedRef.current) setActionError(result.message);
+    },
+    [deleteTask],
   );
 
   const handleOpenCreate = useCallback(() => {
@@ -111,37 +170,38 @@ export default function TodoScreen() {
     setSheet(null);
   }, []);
 
+  // Close the sheet only after the write succeeded; otherwise it keeps the draft
+  // and shows the error.
   const handleSaveSheet = useCallback(
-    (final: Draft) => {
-      if (!sheet) return;
+    async (final: Draft): Promise<SheetOutcome> => {
+      if (!sheet) return { ok: true };
       const payload = toNewTask(final);
-      if (sheet.mode === 'create') {
-        addTask(payload);
-      } else {
-        updateTask(sheet.task.id, payload);
-      }
+      const result =
+        sheet.mode === 'create'
+          ? await addTask(payload)
+          : await updateTask(sheet.task.id, payload);
+      if (!result.ok) return { ok: false, message: result.message };
       setSheet(null);
+      return { ok: true };
     },
     [sheet, addTask, updateTask],
   );
 
-  const handleDeleteFromSheet = useCallback(() => {
-    if (!sheet || sheet.mode !== 'edit') return;
+  const handleDeleteFromSheet = useCallback(async (): Promise<SheetOutcome | null> => {
+    if (!sheet || sheet.mode !== 'edit') return null;
     const target = sheet.task;
     if (Platform.OS !== 'web') {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     }
-    Alert.alert('Delete task?', `Remove "${target.title}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          deleteTask(target.id);
-          setSheet(null);
-        },
-      },
-    ]);
+    const confirmed = await confirmDestructive({
+      title: 'Delete task?',
+      message: `Remove "${target.title}"?`,
+    });
+    if (!confirmed) return null;
+    const result = await deleteTask(target.id);
+    if (!result.ok) return { ok: false, message: result.message };
+    setSheet(null);
+    return { ok: true };
   }, [sheet, deleteTask]);
 
   const { sections, upcomingCount, doneCount } = useMemo(
@@ -154,12 +214,14 @@ export default function TodoScreen() {
       <TaskRow
         task={item}
         justMoved={recentlyMovedIds.has(item.id)}
+        pending={pendingIds.has(item.id)}
+        today={today}
         onPress={handleOpenEdit}
         onToggle={handleToggle}
-        onDelete={deleteTask}
+        onDelete={handleDelete}
       />
     ),
-    [recentlyMovedIds, handleOpenEdit, handleToggle, deleteTask],
+    [recentlyMovedIds, pendingIds, today, handleOpenEdit, handleToggle, handleDelete],
   );
 
   const renderSectionHeader = useCallback(
@@ -188,7 +250,7 @@ export default function TodoScreen() {
 
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={styles.screen}>
-      {loaded ? (
+      {status.tasks !== 'loading' ? (
         <SectionList<Task, TaskSection>
           sections={sections}
           keyExtractor={(item) => `${item.id}-${item.done ? 'done' : 'upcoming'}`}
@@ -211,12 +273,17 @@ export default function TodoScreen() {
                   <Ionicons name="add" size={iconSize.lg} color={colors.onPrimary} />
                 </PressableScale>
               </View>
+              <StorageNotice lists={['tasks']} />
+              {actionError ? (
+                <Notice message={actionError} onDismiss={() => setActionError(null)} />
+              ) : null}
               {tasks.length > 0 ? (
                 <TodoSummary upcomingCount={upcomingCount} doneCount={doneCount} />
               ) : null}
             </View>
           }
-          ListEmptyComponent={<TodoEmptyState />}
+          // Don't show "wide open" when the saved list just couldn't be read.
+          ListEmptyComponent={status.tasks === 'error' ? undefined : <TodoEmptyState />}
         />
       ) : (
         <View style={styles.loading}>

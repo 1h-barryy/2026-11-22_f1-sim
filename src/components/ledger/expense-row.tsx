@@ -1,6 +1,7 @@
-import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition, ReduceMotion } from 'react-native-reanimated';
 
+import { confirmDestructive } from '@/lib/confirm';
 import type { Category, Expense } from '@/lib/types';
 import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
@@ -24,15 +25,12 @@ const layout = LinearTransition.duration(180).reduceMotion(ReduceMotion.System);
 export function ExpenseRow({ expense, onDelete }: { expense: Expense; onDelete: (id: string) => void }) {
   const amount = formatAmount(expense.amount);
   function confirmDelete() {
-    const message = `Remove ${expense.note || expense.category} (${amount}) from your ledger?`;
-    if (Platform.OS === 'web') {
-      if (window.confirm(message)) onDelete(expense.id);
-      return;
-    }
-    Alert.alert('Delete expense?', message, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => onDelete(expense.id) },
-    ], { cancelable: true });
+    void confirmDestructive({
+      title: 'Delete expense?',
+      message: `Remove ${expense.note || expense.category} (${amount}) from your ledger?`,
+    }).then((confirmed) => {
+      if (confirmed) onDelete(expense.id);
+    });
   }
 
   return (

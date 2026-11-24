@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
@@ -13,12 +13,13 @@ import {
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ConfirmSheet } from '@/components/home/confirm-sheet';
+import { ConfirmSheet, type SheetOutcome } from '@/components/home/confirm-sheet';
 import { draftFromParse, emptyDraft, toNewExpense, toNewTask, type Draft } from '@/components/home/draft';
 import { MicButton } from '@/components/home/mic-button';
 import { PressableScale } from '@/components/home/pressable-scale';
 import { Toast, type ToastData } from '@/components/home/toast';
 import { useVoiceInput } from '@/components/home/use-voice-input';
+import { StorageNotice } from '@/components/ui/storage-notice';
 import { ApiClientError, parseText } from '@/lib/api';
 import { MAX_INPUT_LENGTH as MAX_LENGTH } from '@/lib/limits';
 import { useStore } from '@/lib/store';
@@ -60,10 +61,28 @@ export default function HomeScreen() {
 
   const [toast, setToast] = useState<ToastData | null>(null);
 
+  // Set synchronously when a parse starts, so a keyboard submit and a button tap
+  // arriving before the next render can only start one request.
+  const parseInFlightRef = useRef(false);
+
+  // Latest input text for callbacks that run later (e.g. a transcript arriving).
+  const textRef = useRef(text);
+  useEffect(() => {
+    textRef.current = text;
+  }, [text]);
+
   const onTranscript = useCallback((spoken: string) => {
-    setMessage(null);
     // Put the words in the input for editing. Never auto-send.
-    setText((prev) => (prev.trim() ? `${prev.trimEnd()} ${spoken}` : spoken).slice(0, MAX_LENGTH));
+    const prev = textRef.current;
+    const combined = prev.trim() ? `${prev.trimEnd()} ${spoken}` : spoken;
+    const next = combined.slice(0, MAX_LENGTH);
+    textRef.current = next;
+    setText(next);
+    setMessage(
+      combined.length > MAX_LENGTH
+        ? `That was more than ${MAX_LENGTH} characters, so the end of what you said was cut off. Check the text before sending — you may need to add the amount or date again.`
+        : null,
+    );
   }, []);
   const voice = useVoiceInput({ onTranscript, onError: setMessage });
 
@@ -78,7 +97,8 @@ export default function HomeScreen() {
   const canSend = trimmed.length > 0 && trimmed.length <= MAX_LENGTH && !busy;
 
   const handleSend = async () => {
-    if (!canSend) return;
+    if (!canSend || parseInFlightRef.current) return;
+    parseInFlightRef.current = true;
     Keyboard.dismiss();
     setMessage(null);
     setParsing(true);
@@ -93,19 +113,27 @@ export default function HomeScreen() {
     } finally {
       setParsing(false);
       setSheetOpen(true);
+      // Released once the confirmation sheet has its draft.
+      parseInFlightRef.current = false;
     }
   };
 
-  const handleSave = (final: Draft) => {
-    if (final.kind === 'expense') {
-      addExpense(toNewExpense(final));
-      setToast({ id: Date.now(), message: 'Added to Ledger', tone: 'expense' });
-    } else {
-      addTask(toNewTask(final));
-      setToast({ id: Date.now(), message: 'Added to To-do', tone: 'task' });
-    }
+  // Only confirm (toast, clear input, close) after the write to storage succeeded.
+  // On failure the sheet stays open with the user's draft and shows the message.
+  const handleSave = async (final: Draft): Promise<SheetOutcome> => {
+    const result =
+      final.kind === 'expense'
+        ? await addExpense(toNewExpense(final))
+        : await addTask(toNewTask(final));
+    if (!result.ok) return { ok: false, message: result.message };
+    setToast(
+      final.kind === 'expense'
+        ? { id: Date.now(), message: 'Added to Ledger', tone: 'expense' }
+        : { id: Date.now(), message: 'Added to To-do', tone: 'task' },
+    );
     setText('');
     setSheetOpen(false);
+    return { ok: true };
   };
 
   // Cancel keeps the typed text so the user can tweak and resend.
@@ -156,6 +184,8 @@ export default function HomeScreen() {
                     Listening… {Math.floor(voice.durationMillis / 1000)}s · tap to stop
                   </Text>
                 </View>
+              ) : voice.state === 'preparing' ? (
+                <Text style={styles.footerHint}>Getting the mic ready…</Text>
               ) : voice.state === 'transcribing' ? (
                 <Text style={styles.footerHint}>Writing that down…</Text>
               ) : (
@@ -198,6 +228,8 @@ export default function HomeScreen() {
               </Pressable>
             </Animated.View>
           ) : null}
+
+          <StorageNotice lists={['expenses', 'tasks']} />
 
           <View style={styles.examples}>
             <Text style={styles.examplesLabel}>Try one</Text>
