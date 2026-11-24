@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { Tabs } from 'expo-router';
 import type { ColorValue } from 'react-native';
 
-import { colors, fontSize } from '@/theme';
+import { colors, fontSize, fontWeight } from '@/theme';
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
@@ -21,7 +21,7 @@ export default function TabLayout() {
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.mutedText,
         tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
-        tabBarLabelStyle: { fontSize: fontSize.caption - 2, fontWeight: '600' },
+        tabBarLabelStyle: { fontSize: fontSize.micro, fontWeight: fontWeight.semibold },
       }}>
       <Tabs.Screen
         name="index"

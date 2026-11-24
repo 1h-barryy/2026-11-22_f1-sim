@@ -1,7 +1,9 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, fontSize, radius, spacing } from '@/theme';
+import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
+
+const BADGE_SIZE = spacing.xxxl + spacing.xxl + spacing.sm; // 88
 
 export function PlaceholderScreen({ title, emoji, accent }: { title: string; emoji: string; accent: string }) {
   return (
@@ -20,8 +22,8 @@ export function PlaceholderScreen({ title, emoji, accent }: { title: string; emo
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md, padding: spacing.xl },
-  badge: { width: 88, height: 88, borderRadius: radius.xl, alignItems: 'center', justifyContent: 'center' },
+  badge: { width: BADGE_SIZE, height: BADGE_SIZE, borderRadius: radius.xl, alignItems: 'center', justifyContent: 'center' },
   emoji: { fontSize: fontSize.display },
-  title: { fontSize: fontSize.heading, fontWeight: '800', color: colors.text },
+  title: { fontSize: fontSize.heading, fontWeight: fontWeight.heavy, color: colors.text },
   subtitle: { fontSize: fontSize.body, color: colors.mutedText },
 });

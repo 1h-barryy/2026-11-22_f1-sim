@@ -39,6 +39,7 @@ export const radius = {
 } as const;
 
 export const fontSize = {
+  micro: 11, // tab bar labels
   caption: 13,
   small: 14,
   body: 16,
@@ -56,5 +57,42 @@ export const fontWeight = {
   heavy: '800',
 } as const;
 
-export const theme = { colors, spacing, radius, fontSize, fontWeight };
+export const lineHeight = {
+  small: 20, // pairs with fontSize.small
+  body: 22, // pairs with fontSize.body
+  bodyLarge: 24, // pairs with fontSize.bodyLarge
+} as const;
+
+/** Letter spacing for small uppercase labels ("TRY ONE", "AMOUNT"). */
+export const letterSpacing = {
+  label: 0.6,
+} as const;
+
+export const iconSize = {
+  sm: 18,
+  md: 20,
+  lg: 24,
+} as const;
+
+export const borderWidth = {
+  thin: 1,
+  medium: 1.5,
+  thick: 2,
+} as const;
+
+/** Round icon buttons (send, mic). */
+export const controlSize = 48;
+
+export const theme = {
+  colors,
+  spacing,
+  radius,
+  fontSize,
+  fontWeight,
+  lineHeight,
+  letterSpacing,
+  iconSize,
+  borderWidth,
+  controlSize,
+};
 export type Theme = typeof theme;

@@ -8,12 +8,22 @@ export function toISODate(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-/** Parse YYYY-MM-DD as a local-midnight Date (NOT UTC). Returns null if invalid. */
+/**
+ * Parse YYYY-MM-DD as a local-midnight Date (NOT UTC). Returns null if the
+ * string is malformed or not a real calendar date (e.g. 2026-02-31).
+ */
 export function parseISODate(iso: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   if (!m) return null;
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  return Number.isNaN(d.getTime()) ? null : d;
+  const [y, mo, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const d = new Date(y, mo - 1, day);
+  if (d.getFullYear() !== y || d.getMonth() !== mo - 1 || d.getDate() !== day) return null;
+  return d;
+}
+
+/** True for a YYYY-MM-DD string that is a real calendar date. */
+export function isValidISODate(value: unknown): value is string {
+  return typeof value === 'string' && parseISODate(value) !== null;
 }
 
 export function todayISO(): string {

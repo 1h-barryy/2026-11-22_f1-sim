@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 
+import { isValidISODate } from './dates';
 import { CATEGORIES, type Category, type Expense, type Task } from './types';
 
 const EXPENSES_KEY = 'littlelife.expenses.v1';
@@ -16,6 +17,7 @@ const TASKS_KEY = 'littlelife.tasks.v1';
 
 export type NewExpense = Omit<Expense, 'id' | 'createdAt'>;
 export type NewTask = { title: string; due: string | null };
+export type TaskChanges = Partial<NewTask>;
 
 interface StoreValue {
   expenses: Expense[];
@@ -24,6 +26,7 @@ interface StoreValue {
   addExpense: (input: NewExpense) => Expense;
   deleteExpense: (id: string) => void;
   addTask: (input: NewTask) => Task;
+  updateTask: (id: string, changes: TaskChanges) => void;
   deleteTask: (id: string) => void;
   toggleTask: (id: string) => void;
 }
@@ -34,8 +37,6 @@ function makeId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
-
 function isExpense(x: unknown): x is Expense {
   const e = x as Expense;
   return (
@@ -45,8 +46,7 @@ function isExpense(x: unknown): x is Expense {
     Number.isFinite(e.amount) &&
     CATEGORIES.includes(e.category as Category) &&
     typeof e.note === 'string' &&
-    typeof e.date === 'string' &&
-    ISO_RE.test(e.date) &&
+    isValidISODate(e.date) &&
     typeof e.createdAt === 'number'
   );
 }
@@ -57,7 +57,7 @@ function isTask(x: unknown): x is Task {
     !!t &&
     typeof t.id === 'string' &&
     typeof t.title === 'string' &&
-    (t.due === null || (typeof t.due === 'string' && ISO_RE.test(t.due))) &&
+    (t.due === null || isValidISODate(t.due)) &&
     typeof t.done === 'boolean' &&
     (t.doneAt === null || typeof t.doneAt === 'number') &&
     typeof t.createdAt === 'number'
@@ -140,6 +140,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return task;
   }, []);
 
+  const updateTask = useCallback((id: string, changes: TaskChanges) => {
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              ...(changes.title !== undefined ? { title: changes.title } : {}),
+              ...(changes.due !== undefined ? { due: changes.due } : {}),
+            }
+          : t,
+      ),
+    );
+  }, []);
+
   const deleteTask = useCallback((id: string) => {
     setTasks((prev) => prev.filter((t) => t.id !== id));
   }, []);
@@ -153,8 +167,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<StoreValue>(
-    () => ({ expenses, tasks, loaded, addExpense, deleteExpense, addTask, deleteTask, toggleTask }),
-    [expenses, tasks, loaded, addExpense, deleteExpense, addTask, deleteTask, toggleTask],
+    () => ({
+      expenses,
+      tasks,
+      loaded,
+      addExpense,
+      deleteExpense,
+      addTask,
+      updateTask,
+      deleteTask,
+      toggleTask,
+    }),
+    [expenses, tasks, loaded, addExpense, deleteExpense, addTask, updateTask, deleteTask, toggleTask],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

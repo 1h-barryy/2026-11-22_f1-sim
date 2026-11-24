@@ -11,7 +11,7 @@ A playful, AI-powered life tracker: speak or type an expense or a task, and the 
 - [Expo](https://expo.dev) SDK 58 + React Native, running in **Expo Go** (no dev build required)
 - Expo Router for navigation and for the backend (API routes in `src/app/api/`)
 - AsyncStorage for on-device persistence
-- Anthropic API to parse text into an expense or task; OpenAI API for speech-to-text
+- OpenAI API to parse text into an expense or task and for speech-to-text
 
 ## Setup
 
@@ -28,9 +28,9 @@ Set these in `.env` at the repo root. They are read only by the server-side API 
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | yes | Key used by `/api/parse` |
-| `ANTHROPIC_MODEL` | no | Model ID for parsing (default `claude-haiku-5-5`) |
-| `OPENAI_API_KEY` | yes | Key used by `/api/transcribe` |
+| `OPENAI_API_KEY` | yes | Key used by `/api/parse` and `/api/transcribe` |
+| `OPENAI_MODEL` | yes | Model ID `/api/parse` uses to turn text into an expense or task (example in `.env.example`) |
+| `OPENAI_TRANSCRIBE_MODEL` | yes, for voice input | Model ID `/api/transcribe` uses for speech-to-text. If it is unset, the mic shows a friendly "not set up" message and typing still works |
 
 ## Running
 
@@ -62,7 +62,7 @@ npx expo-doctor    # dependency / config health
     ├── app/              Routes only (Expo Router)
     │   ├── _layout.tsx   Root layout: SafeAreaProvider + StoreProvider
     │   ├── (tabs)/       Home, Ledger, To-do tabs
-    │   └── api/          Server API routes (*+api.ts), not created yet
+    │   └── api/          Server API routes: parse+api.ts, transcribe+api.ts
     ├── components/
     │   ├── ui/           Shared UI pieces
     │   ├── home/         Home-screen components
@@ -71,6 +71,7 @@ npx expo-doctor    # dependency / config health
     ├── lib/
     │   ├── api.ts        Client for the API routes
     │   ├── dates.ts      Local-time date helpers
+    │   ├── limits.ts     Input limits shared by client and API routes
     │   ├── store.tsx     React context store, persisted to AsyncStorage
     │   └── types.ts      Shared types
     └── theme.ts          Colors, spacing, radius, font sizes
